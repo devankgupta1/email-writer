@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 @RestController
 @RequestMapping("/api/email")
 @CrossOrigin(origins = "*")
+
 public class EmailGeneratorController {
 
     private final EmailGeneratorService emailGeneratorService;
