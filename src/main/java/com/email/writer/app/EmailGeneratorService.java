@@ -7,6 +7,8 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,23 +47,30 @@ public class EmailGeneratorService {
                     .header("Content-Type", "application/json")
                     .bodyValue(requestBody)
                     .retrieve()
-                    .onStatus(
-                        status -> status.is4xxClientError() || status.is5xxServerError(),
-                        clientResponse -> clientResponse.bodyToMono(String.class)
-                            .map(body -> new RuntimeException("Gemini API Error: " + body))
-                    )
                     .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(40))   // ⏱ timeout fix
+                    .timeout(Duration.ofSeconds(40))
                     .block();
 
             if (response == null || response.isEmpty()) {
-                return "AI did not return any response. Please try again.";
+                return "⚠️ Empty response from AI.";
             }
 
             return extractResponseContent(response);
 
+        } catch (WebClientResponseException.Unauthorized e) {
+            return "🔑 Invalid API key. Please check configuration.";
+
+        } catch (WebClientResponseException.TooManyRequests e) {
+            return "📛 API quota limit reached. Try later.";
+
+        } catch (WebClientResponseException.ServiceUnavailable e) {
+            return "🚫 AI server is currently down.";
+
+        } catch (WebClientRequestException e) {
+            return "🌐 Network issue or AI server unreachable.";
+
         } catch (Exception e) {
-            return "AI service temporarily unavailable. Please try again later.";
+            return "⚠️ Unknown error: " + e.getMessage();
         }
     }
 
@@ -73,25 +82,19 @@ public class EmailGeneratorService {
             JsonNode candidates = rootNode.path("candidates");
 
             if (!candidates.isArray() || candidates.size() == 0) {
-                return "AI did not return any valid response.";
+                return "⚠️ No AI candidates found.";
             }
 
-            JsonNode firstCandidate = candidates.get(0);
-            if (firstCandidate == null) {
-                return "Empty AI response.";
+            JsonNode content = candidates.get(0).path("content").path("parts");
+
+            if (!content.isArray() || content.size() == 0) {
+                return "⚠️ AI response format changed.";
             }
 
-            JsonNode content = firstCandidate.path("content");
-            JsonNode parts = content.path("parts");
-
-            if (!parts.isArray() || parts.size() == 0) {
-                return "AI response format changed.";
-            }
-
-            return parts.get(0).path("text").asText("No text generated.");
+            return content.get(0).path("text").asText("⚠️ No text generated.");
 
         } catch (Exception e) {
-            return "Error processing AI response.";
+            return "⚠️ Error parsing AI response.";
         }
     }
 
