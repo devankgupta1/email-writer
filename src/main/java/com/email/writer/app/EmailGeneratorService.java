@@ -1,5 +1,6 @@
 package com.email.writer.app;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -26,28 +27,42 @@ public class EmailGeneratorService {
     }
 
     public String generateEmailReply(EmailRequest emailRequest) {
+        try {
+            String prompt = buildPrompt(emailRequest);
 
-        String prompt = buildPrompt(emailRequest);
-
-        Map<String, Object> requestBody = Map.of(
-            "contents", List.of(
-                Map.of(
-                    "parts", List.of(
-                        Map.of("text", prompt)
+            Map<String, Object> requestBody = Map.of(
+                "contents", List.of(
+                    Map.of(
+                        "parts", List.of(
+                            Map.of("text", prompt)
+                        )
                     )
                 )
-            )
-        );
+            );
 
-        String response = webClient.post()
-                .uri(geminiApiUrl + "?key=" + geminiApiKey)
-                .header("Content-Type", "application/json")
-                .bodyValue(requestBody)
-                .retrieve()
-                .bodyToMono(String.class)
-                .block();
+            String response = webClient.post()
+                    .uri(geminiApiUrl + "?key=" + geminiApiKey)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                            .map(body -> new RuntimeException("Gemini API Error: " + body))
+                    )
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(40))   // ⏱ timeout fix
+                    .block();
 
-        return extractResponseContent(response);
+            if (response == null || response.isEmpty()) {
+                return "AI did not return any response. Please try again.";
+            }
+
+            return extractResponseContent(response);
+
+        } catch (Exception e) {
+            return "AI service temporarily unavailable. Please try again later.";
+        }
     }
 
     private String extractResponseContent(String response) {
@@ -55,16 +70,28 @@ public class EmailGeneratorService {
             ObjectMapper mapper = new ObjectMapper();
             JsonNode rootNode = mapper.readTree(response);
 
-            return rootNode.path("candidates")
-                    .get(0)
-                    .path("content")
-                    .path("parts")
-                    .get(0)
-                    .path("text")
-                    .asText();
+            JsonNode candidates = rootNode.path("candidates");
+
+            if (!candidates.isArray() || candidates.size() == 0) {
+                return "AI did not return any valid response.";
+            }
+
+            JsonNode firstCandidate = candidates.get(0);
+            if (firstCandidate == null) {
+                return "Empty AI response.";
+            }
+
+            JsonNode content = firstCandidate.path("content");
+            JsonNode parts = content.path("parts");
+
+            if (!parts.isArray() || parts.size() == 0) {
+                return "AI response format changed.";
+            }
+
+            return parts.get(0).path("text").asText("No text generated.");
 
         } catch (Exception e) {
-            return "Error processing request: " + e.getMessage();
+            return "Error processing AI response.";
         }
     }
 
