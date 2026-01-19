@@ -70,7 +70,8 @@ public class EmailGeneratorService {
             return "🌐 Network issue or AI server unreachable.";
 
         } catch (Exception e) {
-            return "⚠️ Unknown error: " + e.getMessage();
+        	e.printStackTrace();
+        	return "⚠️ Something went wrong while generating email.";
         }
     }
 
